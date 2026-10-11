@@ -1,0 +1,9 @@
+{
+  "name": "chengdu-job-radar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Daily job search and application tracker for English-speaking roles in Chengdu.",
+  "engines": {
+    "node": ">=20"
+  }
+}
