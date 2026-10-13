@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "chengdu-job-radar",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "0ce849aa-e37e-4d1c-85df-e71cd2bdd0ce",
       "migrations_dir": "migrations"
     }
   ],
