@@ -1,9 +1,18 @@
 {
   "name": "chengdu-job-radar",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Daily job search and application tracker for English-speaking roles in Chengdu.",
+  "type": "module",
+  "description": "Official-company-career-page monitor and personal job application tracker for Chengdu.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply chengdu-job-radar --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
   }
 }

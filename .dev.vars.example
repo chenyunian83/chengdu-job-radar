@@ -1,0 +1,4 @@
+SERPAPI_KEY=replace-with-your-serpapi-key
+CRON_SECRET=replace-with-a-long-random-secret
+APP_PASSWORD=replace-with-a-private-passphrase-at-least-16-chars
+APP_SESSION_SECRET=replace-with-at-least-32-random-bytes
