@@ -91,7 +91,7 @@ async function collectZhaopin(checkedAt = new Date().toISOString()) {
       !currentEnough(posted, now)) continue;
     if (!candidates.has(row.number)) candidates.set(row.number, row);
   }
-  const detailRows = await mapLimit(Array.from(candidates.values()).slice(0, 60), 5, async (candidate) => {
+  const detailRows = await mapLimit(Array.from(candidates.values()).slice(0, 32), 5, async (candidate) => {
     const url = `https://www.zhaopin.com/jobdetail/${candidate.number}.htm`;
     try {
       const html = await fetchPage(url);
@@ -120,6 +120,7 @@ async function collectZhaopin(checkedAt = new Date().toISOString()) {
     warnings: pages.filter((page) => page.error).map((page) => page.url + "：" + page.error) };
 }
 export { collectZhaopin, jobId, fingerprint, salaryFloor, acceptableExperience, postedIso, currentEnough, SEARCH_PATHS };
+
 
 
 
