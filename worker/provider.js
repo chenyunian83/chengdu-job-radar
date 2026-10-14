@@ -310,7 +310,7 @@ async function collectJobs(env) {
 
   const [countRow, queue] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS total FROM career_sources").first(),
-    env.DB.prepare("SELECT url, domain, company, title FROM career_sources ORDER BY CASE WHEN last_checked IS NULL THEN 0 ELSE 1 END, COALESCE(last_checked, ''), last_seen DESC LIMIT 36").all()
+    env.DB.prepare("SELECT url, domain, company, title FROM career_sources ORDER BY CASE WHEN last_checked IS NULL THEN 0 ELSE 1 END, COALESCE(last_checked, ''), last_seen DESC LIMIT 10").all()
   ]);
   const knownCareerPages = Number(countRow && countRow.total || 0);
   const candidatesToCheck = queue.results || [];
@@ -340,3 +340,4 @@ async function collectJobs(env) {
 }
 
 export { collectJobs, extractJobs, isBlockedHost, isSafeHttpsUrl, isExpiredPosting, sameOfficialSite, SEARCHES };
+
