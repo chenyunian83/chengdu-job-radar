@@ -1,4 +1,5 @@
 import { collectJobs } from "./provider.js";
+import { collectZhaopin, jobId } from "./zhaopin.js";
 import { authConfig, isAuthenticated, sameOrigin, verifyPassword, sessionCookie, expiredCookie } from "./auth.js";
 
 const VALID_STATUSES = ["new", "applied", "interview"];
@@ -66,9 +67,45 @@ async function saveSnapshot(env, snapshot) {
   await env.DB.batch(statements);
 }
 
+async function upsertJobs(env, jobs, checkedAt) {
+  const unique = new Map();
+  for (const row of jobs) {
+    if (!row.title || !row.company || !row.applyUrl) continue;
+    const job = { ...row, id: await jobId(row) };
+    const previous = unique.get(job.id);
+    if (!previous || job.via === "企业官网") unique.set(job.id, job);
+  }
+  const statements = Array.from(unique.values()).map((job) => env.DB.prepare(
+    "INSERT INTO job_cache (id, payload, first_seen, last_seen, published_at, source) VALUES (?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, last_seen = excluded.last_seen, published_at = excluded.published_at, source = excluded.source"
+  ).bind(job.id, JSON.stringify(job), checkedAt, checkedAt, job.posted || "", job.via || "企业官网"));
+  for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+  return unique.size;
+}
+
 async function refresh(env) {
   if (!env.DB) throw new Error("Cloudflare D1 binding DB 尚未配置。");
-  const snapshot = await collectJobs(env);
+  const checkedAt = new Date().toISOString();
+  const [officialResult, platformResult] = await Promise.allSettled([collectJobs(env), collectZhaopin(checkedAt)]);
+  const official = officialResult.status === "fulfilled" ? officialResult.value : null;
+  const platform = platformResult.status === "fulfilled" ? platformResult.value : null;
+  if (!official && !platform) throw new Error("两个职位来源均巡检失败。");
+  const jobs = [...(official?.jobs || []), ...(platform?.jobs || [])];
+  const added = await upsertJobs(env, jobs, checkedAt);
+  const warnings = [
+    ...(official?.sourceSummary?.warnings || []), ...(platform?.warnings || []),
+    ...(!official ? ["企业官网巡检失败：" + String(officialResult.reason?.message || "未知错误")] : []),
+    ...(!platform ? ["智联招聘巡检失败：" + String(platformResult.reason?.message || "未知错误")] : [])
+  ];
+  const snapshot = {
+    jobs, sources: [...(official?.sources || []), ...(platform?.sources || [])], updatedAt: checkedAt,
+    sourceSummary: {
+      ...(official?.sourceSummary || {}),
+      platformPagesChecked: platform?.pagesChecked || 0,
+      platformJobsFound: platform?.jobs.length || 0,
+      jobsUpserted: added, warnings
+    }
+  };
   await saveSnapshot(env, snapshot);
   return snapshot;
 }
@@ -76,18 +113,25 @@ async function refresh(env) {
 async function jobsRoute(env) {
   if (!env.DB) return json({ jobs: [], sources: [], updatedAt: null, message: "Cloudflare D1 尚未配置，请先创建数据库并部署迁移。" }, 503);
   try {
-    const result = await env.DB.prepare("SELECT key, value FROM metadata WHERE key IN ('jobs_snapshot', 'sources_snapshot', 'jobs_updated_at', 'source_summary')").all();
+    const today = new Date();
+    const seenCutoff = new Date(today.getTime() - 14 * 86400000).toISOString();
+    const publishedCutoff = new Date(today.getTime() - 60 * 86400000).toISOString();
+    const [result, cached] = await Promise.all([
+      env.DB.prepare("SELECT key, value FROM metadata WHERE key IN ('sources_snapshot', 'jobs_updated_at', 'source_summary')").all(),
+      env.DB.prepare("SELECT payload FROM job_cache WHERE last_seen >= ? AND (published_at = '' OR published_at >= ?) ORDER BY published_at DESC LIMIT 500").bind(seenCutoff, publishedCutoff).all()
+    ]);
     const metadata = Object.create(null);
     for (const row of result.results || []) metadata[row.key] = row.value;
+    const jobs = (cached.results || []).map((row) => JSON.parse(row.payload));
     return json({
-      jobs: metadata.jobs_snapshot ? JSON.parse(metadata.jobs_snapshot) : [],
-      sources: metadata.sources_snapshot ? JSON.parse(metadata.sources_snapshot) : [],
+      jobs, sources: metadata.sources_snapshot ? JSON.parse(metadata.sources_snapshot) : [],
       updatedAt: metadata.jobs_updated_at || null,
       sourceSummary: metadata.source_summary ? JSON.parse(metadata.source_summary) : null,
-      message: metadata.jobs_updated_at ? null : (env.SERPAPI_KEY ? "等待第一次官网巡检任务运行。" : "尚未设置 SERPAPI_KEY 官网发现服务密钥。")
+      message: jobs.length || metadata.jobs_updated_at ? null : "等待第一次职位巡检任务运行。"
     });
-  } catch {
-    return json({ jobs: [], sources: [], updatedAt: null, message: "无法读取D1职位快照；请确认已运行数据库迁移。" }, 503);
+  } catch (error) {
+    console.error("Read job cache failed:", error?.message || error);
+    return json({ jobs: [], sources: [], updatedAt: null, message: "无法读取D1职位缓存；请确认已运行数据库迁移。" }, 503);
   }
 }
 
@@ -155,7 +199,7 @@ async function apiRoute(request, env) {
       const snapshot = await refresh(env);
       return json({ updatedAt: snapshot.updatedAt, jobsFound: snapshot.jobs.length, pagesChecked: snapshot.sources.length });
     } catch (error) {
-      return json({ message: error.code === "SOURCE_NOT_CONFIGURED" ? error.message : "官网巡检失败，请检查 SERPAPI_KEY 和D1配置。" }, error.code === "SOURCE_NOT_CONFIGURED" ? 503 : 502);
+      return json({ message: error.code === "SOURCE_NOT_CONFIGURED" ? error.message : "职位巡检失败，请检查来源和D1配置。" }, error.code === "SOURCE_NOT_CONFIGURED" ? 503 : 502);
     }
   }
   return json({ message: "未找到 API。" }, 404);
@@ -169,7 +213,7 @@ export default {
   },
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(refresh(env).catch((error) => {
-      console.error("Daily official career-page crawl failed:", error && error.message || error);
+      console.error("Daily job crawl failed:", error && error.message || error);
     }));
   }
 };

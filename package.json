@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Official-company-career-page monitor and personal job application tracker for Chengdu.",
+  "description": "Chengdu job monitor with company career pages, a vetted Zhaopin supplement, and personal application tracking.",
   "engines": {
     "node": ">=22"
   },
